@@ -1,4 +1,4 @@
-name: pycu11
+name: vacnic
 channels:
   - pytorch
   - conda-forge
@@ -283,4 +283,4 @@ dependencies:
     - wcwidth==0.2.5
     - xxhash==3.0.0
     - yarl==1.7.2
-prefix: /cw/liir_code/NoCsBack/tingyu/miniconda3/envs/pycu11
+

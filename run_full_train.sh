@@ -1,13 +1,13 @@
 #!/bin/sh
-CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master_port 29501 /CODEDIR/train_mmbart_enc_self_face_name_ids_retrieve_crossattn_bart_guide_match.py --seed 684331 \
---gpu_ids 2,3 --num_workers 16 \
+CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master_port 29501 /CODEDIR/train_mmbart_enc_self_face_name_ids_retrieve_crossattn_bart_guide_match.py --seed 684331 \
+--gpu_ids 0 --num_workers 16 \
 --article_max_length 512 --caption_max_length 100 \
---plm_type facebook/bart-base \
+--plm_type patrickvonplaten/bart-large-fp32 \
 --clip_type ViT-B/16 \
 --ent_start_token "<ENT>" --ent_end_token "<ENT>" \
---enc_fusion_layer 0 1 2 3 4 5 \
---dim_common 768 \
---warmup_rate 0.05 --train_batch_size 12 --val_batch_size 1 --test_batch_size 1 \
+--enc_fusion_layer 0 1 2 3 4 5 6 7 8 9 10 11 \
+--dim_common 1024 \
+--warmup_rate 0.05 --train_batch_size 32 --val_batch_size 1 --test_batch_size 1 \
 --beam_size 5 --max_length 50 \
 --num_epoch 16 --lr_bart 3e-5 --lr_clip 1e-7 \
 --weight_decay 0.01 --clip_norm 0.1 \

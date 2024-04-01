@@ -3,7 +3,6 @@ import argparse
 from cmath import nan
 
 parser = argparse.ArgumentParser()
-# parser.add_argument("--local_rank", type=int, default=-1)
 parser.add_argument("--seed", type=str, default="684331")
 parser.add_argument("--gpu_ids", type=str, default="1")
 parser.add_argument("--num_workers", type=int, default=4)
@@ -11,7 +10,6 @@ parser.add_argument("--num_workers", type=int, default=4)
 parser.add_argument("--article_max_length", type=int, default=512)
 parser.add_argument("--caption_max_length", type=int, default=100)
 parser.add_argument("--plm_type", type=str, default="facebook/bart-base")
-# parser.add_argument("--use_clip_feat", default=False, type=lambda x: (str(x).lower() == 'true'))
 parser.add_argument("--clip_type", type=str, default="ViT-B/32")
 parser.add_argument("--ent_start_token", type=str, default="no")
 parser.add_argument("--ent_end_token", type=str, default="no")
@@ -45,7 +43,6 @@ parser.add_argument("--no_clip_loss", default=False, type=lambda x: (str(x).lowe
 parser.add_argument("--prompt_size", type=int, default=10)
 parser.add_argument("--use_vis_cls", default=False, type=lambda x: (str(x).lower() == 'true'))
 
-# parser.add_argument("--freeze_layer", nargs="+", type=int)
 parser.add_argument("--max_ner_type_len", type=int, default=80)
 parser.add_argument("--max_ner_type_len_gt", type=int, default=20)
 
@@ -86,15 +83,11 @@ def prep_for_training(model, train_size, DEVICE):
     if "," in args.gpu_ids:
         model = torch.nn.parallel.DistributedDataParallel(model.cuda(), device_ids=[local_rank], output_device=local_rank,find_unused_parameters=True)
     model.to(DEVICE)
-    # clip_model.to(DEVICE)
     if "," in args.gpu_ids:
         optimizer_bart = optim.AdamW(list(model.module.model.parameters()) + list(model.module.lm_head.parameters()),betas= (0.9, 0.999), lr=args.lr_bart, eps=1e-8, weight_decay=args.weight_decay)
 
-        optimizer_clip = optim.AdamW(list(model.module.clip_model.parameters()),betas= (0.9, 0.999), lr=args.lr_clip, eps=1e-8, weight_decay=args.weight_decay)
     else:
         optimizer_bart = optim.AdamW(list(model.model.parameters()) + list(model.lm_head.parameters()),betas= (0.9, 0.999), lr=args.lr_bart, eps=1e-8, weight_decay=args.weight_decay)
-
-        optimizer_clip = optim.AdamW(list(model.clip_model.parameters()),betas= (0.9, 0.999), lr=args.lr_clip, eps=1e-8, weight_decay=args.weight_decay)
 
     num_training_steps = args.num_epoch * train_size / args.train_batch_size
     num_warmup_steps = args.warmup_rate * num_training_steps
@@ -102,95 +95,9 @@ def prep_for_training(model, train_size, DEVICE):
     scheduler_bart = get_linear_schedule_with_warmup(optimizer_bart,
                                                 num_warmup_steps,
                                                 num_training_steps)
-    scheduler_clip = get_linear_schedule_with_warmup(optimizer_clip,
-                                                num_warmup_steps,
-                                                num_training_steps)
 
-    return model, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip
+    return model, optimizer_bart, scheduler_bart
 
-
-def get_embedding_ner(model, ner_ids_3d):
-    bsz, num_ner, id_len = ner_ids_3d.size()
-    hidden_states_ner_list = []
-    with torch.no_grad():
-        if "," in args.gpu_ids:
-            encoder = model.module.model.encoder
-        else:
-            encoder = model.model.encoder
-        for i in range(num_ner):
-            ner_ids = ner_ids_3d[:, i, :].squeeze(1)
-            ner_shape = ner_ids.size()
-            ner_ids = ner_ids.view(-1, ner_shape[-1])
-            ner_embeds = encoder.embed_tokens_ner(ner_ids) * encoder.embed_scale
-            embed_pos_ner = encoder.embed_positions_ner(ner_shape)
-
-            hidden_states_ner = ner_embeds + embed_pos_ner
-            hidden_states_ner = encoder.layernorm_embedding_ner(hidden_states_ner)
-            hidden_states_ner = torch.nn.functional.dropout(hidden_states_ner, p=encoder.dropout, training=False)
-            hidden_states_ner_list.append(torch.mean(hidden_states_ner, dim=1))
-            del hidden_states_ner
-    # return hidden_states_ner
-    return torch.stack(hidden_states_ner_list, dim=1)
-
-
-
-def get_embedding_tgt(model, tgt_ids):
-    with torch.no_grad():
-        if "," in args.gpu_ids:
-            decoder = model.module.model.decoder
-        else:
-            decoder = model.model.decoder
-        
-        tgt_shape = tgt_ids.size()
-        tgt_ids = tgt_ids.view(-1, tgt_shape[-1])
-        tgt_ids = tgt_ids.cuda()
-        tgt_embeds = decoder.embed_tokens(tgt_ids) * decoder.embed_scale
-        embed_pos = decoder.embed_positions(tgt_shape)
-
-        hidden_states = tgt_embeds + embed_pos
-        hidden_states = decoder.layernorm_embedding(hidden_states)
-        hidden_states = torch.nn.functional.dropout(hidden_states, p=decoder.dropout, training=False)
-    return hidden_states
-
-
-def find_first_sublist(seq, sublist, start=0):
-    length = len(sublist)
-    # print(seq, sublist)
-    for index in range(start, len(seq)):
-        if seq[index: index+length] == sublist:
-            return index, index+length
-
-
-
-def get_hidden_states_ner(model, src_ids, src_mask, tgt_input, img_feat, name_ids, name_mask, org_ids, org_mask, gpe_ids, gpe_mask, ner_mask):
-    # stop gradient to get representation of gt ners
-    # and we do not cross-attn ner to img here by setting add_img_ner_attn=False
-    with torch.no_grad():
-        if "," in args.gpu_ids:
-            model = model.module.model
-        else:
-            model = model.model
-        
-        output = model(input_ids=src_ids, attention_mask=src_mask, decoder_input_ids=tgt_input, image_features=img_feat, name_ids=name_ids, org_ids=org_ids, gpe_ids=gpe_ids, name_mask=name_mask, org_mask=org_mask, gpe_mask=gpe_mask, ner_mask=ner_mask, add_img_ner_attn=False)["hidden_states_ner"]
-    return output
-
-
-def pool(last_hidden_states, attention_mask):
-    last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-    emb = last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-    emb = torch.nan_to_num(emb, nan=1.0)
-    return emb
-
-
-def pool_replace(last_hidden_states, attention_mask, img_feat_map):
-    last_hidden = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
-    emb = last_hidden.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
-    for i in range(emb.size()[0]):
-        if torch.isnan(emb[i][0]):
-            # print(f"img_feat_map:{img_feat_map[i]}")
-            emb[i] = img_feat_map[i].detach().cpu().to(emb.device)
-            # print(emb)
-    return emb
 
 
 def shift_tokens_right(input_ids, pad_token_id: int, decoder_start_token_id: int):
@@ -239,19 +146,16 @@ def extract_clip_img_feat(clip_model, x):
         x = x.float()
     return x, x_cls
 
-def train_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, train_dataloader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, epoch, text_table, DEVICE):
+def train_epoch(model, loss_fn, train_dataloader, optimizer_bart, scheduler_bart, epoch, DEVICE):
     model.train()
     tr_loss = 0
     tr_txt_loss = 0
-    tr_clip_loss = 0
     nb_tr_steps = 0
 
-    bi_contras_loss = BatchSoftmax()
     for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
 
-        src_ids, tgt_ids, tgt_ids_clip, img_tensors, face_emb, names_art_ids, names_ids, names_ids_flatten = batch["article_ids"], batch["caption_ids"], batch["caption_ids_clip"], batch["img_tensor"], batch["face_emb"], batch["names_art_ids"], batch["names_ids"], batch["names_ids_flatten"]
+        src_ids, tgt_ids, tgt_ids_clip, img_tensors = batch["article_ids"], batch["caption_ids"], batch["caption_ids_clip"], batch["img_tensor"]
         src_ids = src_ids.to(DEVICE)
-        # src_ner_mask_ids = src_ner_mask_ids.to(DEVICE)
         tgt_ids = tgt_ids.to(DEVICE)
         tgt_ids_clip = tgt_ids_clip.to(DEVICE)
         img_tensors = img_tensors.to(DEVICE)
@@ -264,8 +168,6 @@ def train_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, tr
         else:
             img_feat, img_feat_cls = extract_clip_img_feat(model.clip_model, img_tensors)
 
-
-        # print("src", src_ids.size())
         if args.prompt_mlp_type == "clipcap":
             output = model(input_ids=src_ids, attention_mask=src_mask, decoder_input_ids=tgt_input, image_features=img_feat_cls)
         else:
@@ -275,29 +177,14 @@ def train_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, tr
         
         txt_loss = loss_fn(logits.reshape(-1, logits.shape[-1]), tgt_ids.reshape(-1))
         tr_txt_loss += txt_loss.item()
-
-        if not args.no_clip_loss:
-            if "," in args.gpu_ids:
-                logits_per_image, logits_per_text = model.module.clip_model(img_tensors, tgt_ids_clip)
-            else:
-                logits_per_image, logits_per_text = model.clip_model(img_tensors, tgt_ids_clip)
-            clip_gt = torch.arange(img_tensors.size()[0], dtype=torch.long, device=DEVICE)
-
-            total_loss_clip = (loss_img_clip(logits_per_image, clip_gt) + loss_txt_clip(logits_per_text, clip_gt))/2
-
-            tr_clip_loss += total_loss_clip.item()
         
         loss = txt_loss
-        # if torch.cuda.device_count() > 1:
-        #     loss = loss.mean()
-        # else:
-        #     loss = loss
         loss.backward()
         if not args.no_clip_norm:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.clip_norm)
         tr_loss += loss.item()
         nb_tr_steps += 1
-        # print(f"current dec seq: {[tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[i], dim=-1))) for i in range(logits.shape[0])]}")
+
         if loss == nan:
             print(batch)
         
@@ -305,27 +192,16 @@ def train_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, tr
         scheduler_bart.step()
         optimizer_bart.zero_grad()
         
-        # optimizer_clip.step()
-        # scheduler_clip.step()
-        # optimizer_clip.zero_grad()
 
         wandb.log({"loss": loss})
         wandb.log({"text loss": txt_loss})
 
-
-        if step % 500 == 0 and not step == 0:
-            # logger.info(f"current dec seq: {tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[0], dim=-1)))}")
-            text_from_logits = [tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[i], dim=-1))) for i in range(logits.shape[0])]
-            text_table.add_data(epoch, step, tr_loss/step, text_from_logits)
     return tr_loss / nb_tr_steps
 
 
-def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val_dataloader, DEVICE):
+def eval_epoch(model, loss_fn, val_dataloader, DEVICE):
     model.eval()
-    # clip_model.eval()
     val_loss = 0
-    # val_clip_loss = 0
-    # val_contras_loss = 0
     nb_val_steps = 0
     out_dict = {}
     for step, batch in enumerate(tqdm(val_dataloader, desc="Iteration")):
@@ -333,7 +209,6 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
         
         src_ids, tgt_ids, tgt_sent, tgt_ids_clip, img_tensors, face_emb, names_art_ids, = batch["article_ids"], batch["caption_ids"], batch["caption"], batch["caption_ids_clip"], batch["img_tensor"], batch["face_emb"], batch["names_art_ids"],
         src_ids = src_ids.to(DEVICE)
-        # src_ner_mask_ids = src_ner_mask_ids.to(DEVICE)
         tgt_ids = tgt_ids.to(DEVICE)
         tgt_ids_clip = tgt_ids_clip.to(DEVICE)
         img_tensors = img_tensors.to(DEVICE)
@@ -351,8 +226,6 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
 
         src_mask = create_src_mask_bart(src_ids)
 
-
-        # print("src", src_ids.size())
         if args.prompt_mlp_type == "clipcap":
             output = model(input_ids=src_ids, attention_mask=src_mask, decoder_input_ids=tgt_input, image_features=img_feat_cls)
         else:
@@ -365,7 +238,6 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
 
         loss = txt_loss
         out_dict[step]["gt_cap"] = tgt_sent
-        # out_dict[step][f"beam{args.beam_size}_out"] = gen_cap
 
         if torch.cuda.device_count() > 1:
             loss = loss.mean()
@@ -379,18 +251,16 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
     return val_loss / nb_val_steps, out_dict
 
 
-def train(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, train_dataloader, val_dataloader, test_dataloader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, model_name, DEVICE):
+def train(model, loss_fn, train_dataloader, val_dataloader, test_dataloader, optimizer_bart, scheduler_bart, model_name, DEVICE):
     train_losses = []
     val_losses = []
 
     min_val_loss = 999
-    # max_val_bleu = -1
     wandb.watch(model)
-    text_table = wandb.Table(columns=["epoch", "step", "loss", "text"])
     for epoch_i in range(int(args.num_epoch)):
-        train_loss = train_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, train_dataloader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, epoch_i, text_table, DEVICE)
+        train_loss = train_epoch(model, loss_fn, train_dataloader, optimizer_bart, scheduler_bart, epoch_i, DEVICE)
 
-        val_loss, out_dict = eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val_dataloader, DEVICE)
+        val_loss, out_dict = eval_epoch(model, loss_fn, val_dataloader, DEVICE)
 
         wandb.log({"epoch": epoch_i})
         
@@ -416,12 +286,10 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
     meteor_scorer.lock.acquire()
     count = 0
     out_dict = {}
-    # if "," in args.gpu_ids:
-    #     model = model.module
     for step, batch in enumerate(tqdm(data_loader, desc="Iteration")):
         out_dict[step] = {}
 
-        src_ids, tgt_sent, img_tensors, face_emb, names_art_ids, = batch["article_ids"], batch["caption"], batch["img_tensor"], batch["face_emb"], batch["names_art_ids"],
+        src_ids, tgt_sent, img_tensors, = batch["article_ids"], batch["caption"], batch["img_tensor"]
         src_ids = src_ids.to(DEVICE)
         img_tensors = img_tensors.to(DEVICE)
         src_mask = create_src_mask_bart(src_ids)
@@ -434,10 +302,7 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
 
         src_mask = create_src_mask_bart(src_ids)
         
-        # print(names_mask.size(), org_norp_mask.size(), gpe_loc_mask.size())
-        # ner_mask = create_src_mask_bart(torch.zeros(names_art_ids.size()))
         ner_mask = torch.ones((args.test_batch_size, args.max_ner_type_len_gt))
-        # print(ner_mask.size())
         ner_mask = ner_mask.to(DEVICE)
 
         if "," in args.gpu_ids:
@@ -455,7 +320,6 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
 
         gt_unidecode = unidecode.unidecode(tgt_sent[0])
         gen_unidecode = unidecode.unidecode(gen_cap)
-        # print(gen_unidecode)
 
         # Remove punctuation
         caption = re.sub(r'[^\w\s]', '', gt_unidecode)
@@ -515,7 +379,6 @@ def _stat(self, hypothesis_str, reference_list):
 if __name__ == "__main__":
     import os
     from src.utils.misc import set_random_seed, get_logger
-    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     set_random_seed(int(args.seed))
     from torch.utils.data.distributed import DistributedSampler
     import torch.distributed as dist
@@ -531,17 +394,11 @@ if __name__ == "__main__":
     from tqdm import tqdm
     
     from src.data.nytimes_dataset_newsmap_ent_article_seg_ent_pos import NYTimesDictDatasetEntityTypeFixLenEntPos, collate_fn_nytimes_entity_type
-    # from src.data.goodnews_dataset_entity import GoodNewsDictDatasetEntity, pad_sequence, collate_fn_goodnews_entity
     from torch.utils.data import DataLoader
-    from src.utils.generation_utils import beam_search, greedy_search, get_prob
     from transformers import get_linear_schedule_with_warmup, BartTokenizer, PreTrainedTokenizerFast
     from src.models.modeling_mmbart_clip_inside_vis_clipcap_ent_type_final_fix_len_enc_self_crossattn import BartForMultiModalGeneration
     from torchvision import models, transforms
     import torch.optim as optim
-    # from torchtext.data import get_tokenizer
-    # from torchtext.data.metrics import bleu_score
-    # import clip
-    # from src.utils.clip_features import ClipViTFeat
     import re
     import types
     import numpy as np
@@ -554,14 +411,10 @@ if __name__ == "__main__":
 
 
     local_rank = int(os.environ['LOCAL_RANK'])
-    # local_rank = args.local_rank
     print(local_rank)
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend="nccl")
-    # dist.barrier()
-    
-    # DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # torch.multiprocessing.set_sharing_strategy('file_system')
+
     world_size = torch.cuda.device_count()
     print(f"world size: {world_size}")
     os.environ["TORCH_DISTRIBUTED_DEBUG"] = "INFO"
@@ -671,7 +524,6 @@ if __name__ == "__main__":
 
     wandb.config.update(args)
 
-    # tokenizer = BartTokenizer.from_pretrained(args.plm_type)
     if args.plm_type.startswith("ainize"):
         tokenizer = PreTrainedTokenizerFast.from_pretrained("ainize/bart-base-cnn")
     else:
@@ -692,12 +544,6 @@ if __name__ == "__main__":
     if args.perturb:
         bos_noise = torch.randn(1024)
         model.model.shared.weight.data[0] = model.model.shared.weight.data[0] + bos_noise
-
-    # if args.add_article_mask_ner:
-    #     tokenizer.add_special_tokens({"additional_special_tokens":['<PERSON>', "<ORGNORP>", "<GPELOC>"]}) ##This line is updated
-    #     # ##This line is updated
-    #     model.resize_token_embeddings(len(tokenizer))
-    #     logger.info(f"added {len(tokenizer)} special tokens to tokenizer: <PERSON>, <ORGNORP> and <GPELOC>")
 
     del clip_model
     img_transform = transforms.Compose([
@@ -800,20 +646,11 @@ if __name__ == "__main__":
             val_loader = {}
             train_loader = {}
 
-    model, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip = prep_for_training(model, len(train_data), DEVICE)
+    model, optimizer_bart, scheduler_bart = prep_for_training(model, len(train_data), DEVICE)
 
-    # model, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip = prep_for_training(model, args.train_batch_size, DEVICE)
-    # model, optimizer, scheduler = prep_for_training(model, args.train_batch_size, DEVICE)
-    # train_epoch(model, {}, train_loader, optimizer, scheduler)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id).to(DEVICE)
-    # model.save_pretrained(os.path.join(args.out_dir, model_name+".pt"))
-    # word_tokenizer = get_tokenizer('spacy', language='en')
-    loss_img = torch.nn.CrossEntropyLoss()
-    loss_txt = torch.nn.CrossEntropyLoss()
-    loss_clip_bart = torch.nn.CrossEntropyLoss()
 
-    # map_net = torch.nn.Linear(768, 512).to(DEVICE)
-    train(model, loss_fn, loss_img, loss_txt, loss_clip_bart, train_loader, val_loader, test_loader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, model_name, DEVICE)
+    train(model, loss_fn, train_loader, val_loader, test_loader, optimizer_bart, scheduler_bart, model_name, DEVICE)
     
     
     bleu_scorer = BleuScorer(n=4)
@@ -830,6 +667,5 @@ if __name__ == "__main__":
     
     wandb.log({"bleu1":blue1, "bleu2":blue2, "bleu3":blue3, "bleu4":blue4, "rouge":rouge_score, "meteor":meteor_score, "cider":cider_score})
 
-    # if args.add_article_mask_ner:
     tokenizer.save_pretrained(args.out_dir)
     

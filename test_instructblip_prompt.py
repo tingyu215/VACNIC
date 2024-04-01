@@ -37,29 +37,18 @@ def gen_caption_from_loader_instructblip(model, data_loader, processor, beam_siz
         else:
             prompts = ["Generate news image caption:"] * len(raw_img)
         inputs = processor(images=raw_img, text=prompts,padding=True, truncation=True, return_tensors="pt").to("cuda")
-        # import ipdb
-        # ipdb.set_trace()
         output = model.generate(**inputs, max_new_tokens=50)
         gen_cap = processor.batch_decode(output, skip_special_tokens=True)
 
-        # ipdb.set_trace()
-
-        
-        # gen_cap = [cap.split("ASSISTANT:")[-1] for cap in gen_cap]
 
         out_dict[step]["gt"] = tgt_sent
         out_dict[step]["gen"] = gen_cap
-
-        # import ipdb
-        # ipdb.set_trace()
         
     
     return out_dict
 
 
 if __name__ == "__main__":
-    # config_blip = Blip2Config()
-    # OPT pipeline
     from src.data.dataset_entity_type_newsmep_blip import GoodNewsDictDatasetEntityTypeFixLenEntPos, collate_fn_goodnews_entity_type, NYTimesDictDatasetEntityTypeFixLenEntPos, collate_fn_nytimes_entity_type
     from transformers import BartTokenizer
     from torchvision import transforms
@@ -111,9 +100,6 @@ if __name__ == "__main__":
 
 
     model.config.text_config.pad_token_id = processor.tokenizer.pad_token_id
-    
-    # model.to("cuda")
-    # processor = LlavaProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf",  device_map="auto")
 
 
     output_dict = gen_caption_from_loader_instructblip(model, test_loader, processor, beam_size=5, max_length=50, use_opt=args.use_opt)

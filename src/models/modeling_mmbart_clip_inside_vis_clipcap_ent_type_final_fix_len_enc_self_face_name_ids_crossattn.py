@@ -30,11 +30,7 @@ from dataclasses import dataclass
 from transformers.activations import ACT2FN
 from transformers.utils.generic import ModelOutput
 from transformers.modeling_outputs import (
-    # BaseModelOutput,
-    # BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
-    # Seq2SeqLMOutput,
-    # Seq2SeqModelOutput,
     Seq2SeqQuestionAnsweringModelOutput,
     Seq2SeqSequenceClassifierOutput,
 )

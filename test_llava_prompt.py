@@ -44,16 +44,12 @@ def gen_caption_from_loader_llava(model, data_loader, processor, beam_size, max_
         out_dict[step]["gt"] = tgt_sent
         out_dict[step]["gen"] = gen_cap
 
-        # import ipdb
-        # ipdb.set_trace()
         
     
     return out_dict
 
 
 if __name__ == "__main__":
-    # config_blip = Blip2Config()
-    # OPT pipeline
     from src.data.dataset_entity_type_newsmep_blip import GoodNewsDictDatasetEntityTypeFixLenEntPos, collate_fn_goodnews_entity_type, NYTimesDictDatasetEntityTypeFixLenEntPos, collate_fn_nytimes_entity_type
     from transformers import BartTokenizer
     from torchvision import transforms
@@ -100,7 +96,6 @@ if __name__ == "__main__":
 
     quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16)
     model = LlavaForConditionalGeneration.from_pretrained("llava-hf/llava-1.5-7b-hf", quantization_config=quantization_config)
-    # model.to("cuda")
     processor = LlavaProcessor.from_pretrained("llava-hf/llava-1.5-7b-hf",  device_map="auto")
 
     output_dict = gen_caption_from_loader_llava(model, test_loader, processor, beam_size=5, max_length=50, use_opt=args.use_opt)

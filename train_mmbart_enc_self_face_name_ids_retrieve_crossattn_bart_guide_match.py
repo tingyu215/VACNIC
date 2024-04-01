@@ -361,16 +361,11 @@ def train_epoch(bart_model, model, loss_margin, loss_fn, loss_img_clip, loss_txt
             loss = txt_loss + args.alpha * loss_bart_margin
         else:
             loss = txt_loss + args.mapping_loss_weight * face_name_loss + args.alpha * loss_bart_margin
-        # if torch.cuda.device_count() > 1:
-        #     loss = loss.mean()
-        # else:
-        #     loss = loss
         loss.backward()
         if not args.no_clip_norm:
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.clip_norm)
         tr_loss += loss.item()
         nb_tr_steps += 1
-        # print(f"current dec seq: {[tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[i], dim=-1))) for i in range(logits.shape[0])]}")
         if loss == nan:
             print(batch)
         
@@ -388,10 +383,6 @@ def train_epoch(bart_model, model, loss_margin, loss_fn, loss_img_clip, loss_txt
         wandb.log({"margin loss": loss_bart_margin})
 
 
-        # if step % 500 == 0 and not step == 0:
-        #     # logger.info(f"current dec seq: {tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[0], dim=-1)))}")
-        #     text_from_logits = [tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(torch.argmax(logits[i], dim=-1))) for i in range(logits.shape[0])]
-        #     text_table.add_data(epoch, step, tr_loss/step, text_from_logits)
     return tr_loss / nb_tr_steps
 
 
@@ -432,7 +423,6 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
         src_mask = create_src_mask_bart(src_ids)
 
 
-        # print("src", src_ids.size())
         if args.prompt_mlp_type == "clipcap":
             output = model(input_ids=src_ids, attention_mask=src_mask, decoder_input_ids=tgt_input, image_features=img_feat_cls, face_features=face_emb, face_mask=face_mask, name_ids=names_art_ids, name_mask=names_art_mask, add_ner_ffn=True)
         else:
@@ -445,7 +435,6 @@ def eval_epoch(model, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, val
 
         loss = txt_loss
         out_dict[step]["gt_cap"] = tgt_sent
-        # out_dict[step][f"beam{args.beam_size}_out"] = gen_cap
 
         if torch.cuda.device_count() > 1:
             loss = loss.mean()
@@ -464,9 +453,7 @@ def train(bart_model, model, loss_margin, loss_fn, loss_img_clip, loss_txt_clip,
     val_losses = []
 
     min_val_loss = 999
-    # max_val_bleu = -1
     wandb.watch(model)
-    # text_table = wandb.Table(columns=["epoch", "step", "loss", "text"])
     for epoch_i in range(int(args.num_epoch)):
         train_loss = train_epoch(bart_model, model, loss_margin, loss_fn, loss_img_clip, loss_txt_clip, loss_clip_bart, train_dataloader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, epoch_i, DEVICE)
 
@@ -496,8 +483,6 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
     meteor_scorer.lock.acquire()
     count = 0
     out_dict = {}
-    # if "," in args.gpu_ids:
-    #     model = model.module
     for step, batch in enumerate(tqdm(data_loader, desc="Iteration")):
         out_dict[step] = {}
 
@@ -520,10 +505,7 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
 
         src_mask = create_src_mask_bart(src_ids)
         
-        # print(names_mask.size(), org_norp_mask.size(), gpe_loc_mask.size())
-        # ner_mask = create_src_mask_bart(torch.zeros(names_art_ids.size()))
         ner_mask = torch.ones((args.test_batch_size, args.max_ner_type_len_gt))
-        # print(ner_mask.size())
         ner_mask = ner_mask.to(DEVICE)
 
         if "," in args.gpu_ids:
@@ -541,7 +523,6 @@ def gen_caption_from_loader_bart(model, data_loader, tokenizer, bleu_scorer, rou
 
         gt_unidecode = unidecode.unidecode(tgt_sent[0])
         gen_unidecode = unidecode.unidecode(gen_cap)
-        # print(gen_unidecode)
 
         # Remove punctuation
         caption = re.sub(r'[^\w\s]', '', gt_unidecode)
@@ -601,7 +582,6 @@ def _stat(self, hypothesis_str, reference_list):
 if __name__ == "__main__":
     import os
     from src.utils.misc import set_random_seed, get_logger
-    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
     set_random_seed(int(args.seed))
     from torch.utils.data.distributed import DistributedSampler
     import torch.distributed as dist
@@ -617,17 +597,11 @@ if __name__ == "__main__":
     from tqdm import tqdm
     
     from src.data.nytimes_dataset_newsmap_ent_article_seg_ent_pos import NYTimesDictDatasetEntityTypeFixLenEntPos, collate_fn_nytimes_entity_type
-    # from src.data.goodnews_dataset_entity import GoodNewsDictDatasetEntity, pad_sequence, collate_fn_goodnews_entity
     from torch.utils.data import DataLoader
-    from src.utils.generation_utils import beam_search, greedy_search, get_prob
     from transformers import get_linear_schedule_with_warmup, BartTokenizer, PreTrainedTokenizerFast, BartForConditionalGeneration
     from src.models.modeling_mmbart_clip_inside_vis_clipcap_ent_type_final_fix_len_enc_self_face_name_ids_crossattn import BartForMultiModalGeneration
     from torchvision import models, transforms
     import torch.optim as optim
-    # from torchtext.data import get_tokenizer
-    # from torchtext.data.metrics import bleu_score
-    # import clip
-    # from src.utils.clip_features import ClipViTFeat
     import re
     import types
     import numpy as np
@@ -783,12 +757,6 @@ if __name__ == "__main__":
         bos_noise = torch.randn(1024)
         model.model.shared.weight.data[0] = model.model.shared.weight.data[0] + bos_noise
 
-    # if args.add_article_mask_ner:
-    #     tokenizer.add_special_tokens({"additional_special_tokens":['<PERSON>', "<ORGNORP>", "<GPELOC>"]}) ##This line is updated
-    #     # ##This line is updated
-    #     model.resize_token_embeddings(len(tokenizer))
-    #     logger.info(f"added {len(tokenizer)} special tokens to tokenizer: <PERSON>, <ORGNORP> and <GPELOC>")
-
     del clip_model
     img_transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
@@ -845,19 +813,12 @@ if __name__ == "__main__":
 
     model, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip = prep_for_training(model, len(train_data), DEVICE)
 
-    # model, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip = prep_for_training(model, args.train_batch_size, DEVICE)
-    # model, optimizer, scheduler = prep_for_training(model, args.train_batch_size, DEVICE)
-    # train_epoch(model, {}, train_loader, optimizer, scheduler)
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id).to(DEVICE)
-    # model.save_pretrained(os.path.join(args.out_dir, model_name+".pt"))
-    # word_tokenizer = get_tokenizer('spacy', language='en')
     loss_img = torch.nn.CrossEntropyLoss()
     loss_txt = torch.nn.CrossEntropyLoss()
     loss_clip_bart = torch.nn.CrossEntropyLoss()
-    # loss_margin = torch.nn.CosineEmbeddingLoss(margin=args.margin)
     loss_margin = torch.nn.HingeEmbeddingLoss(margin=args.margin)
 
-    # map_net = torch.nn.Linear(768, 512).to(DEVICE)
     train(bart_model, model, loss_margin, loss_fn, loss_img, loss_txt, loss_clip_bart, train_loader, val_loader, test_loader, optimizer_bart, optimizer_clip, scheduler_bart, scheduler_clip, model_name, DEVICE)
     
     
@@ -875,6 +836,5 @@ if __name__ == "__main__":
     
     wandb.log({"bleu1":blue1, "bleu2":blue2, "bleu3":blue3, "bleu4":blue4, "rouge":rouge_score, "meteor":meteor_score, "cider":cider_score})
 
-    # if args.add_article_mask_ner:
     tokenizer.save_pretrained(args.out_dir)
     

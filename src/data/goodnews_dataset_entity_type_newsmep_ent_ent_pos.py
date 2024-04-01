@@ -10,7 +10,6 @@ from torchvision.transforms import (CenterCrop, Compose, Normalize, Resize,
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
-# from torchtext.data import get_tokenizer
 from nltk.tokenize import word_tokenize
 from transformers import BartTokenizer, BartModel
 import json

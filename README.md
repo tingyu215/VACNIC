@@ -5,6 +5,8 @@ Official code for [Visually-Aware Context Modeling for News Image Captioning](ht
 * ~~The new version of the paper will be updated soon.~~
 * The major part of the codebase is complete, I will add missing things from time to time (if any)
 
+* Added the original inference file (not well cleaned yet). For inference, set length penalty to 2.0, seed=42.
+
 ## Installation
 To create conda env, please run:
 
